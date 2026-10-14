@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Administration - LightCloud</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="theme.js"></script>
+</head><body>
+<div id="bg" aria-hidden="true"></div><script src="bg.js"></script>
+<div id="app" class="hide">
+  <aside id="nav"></aside>
+  <main>
+    <div class="top"><h1 style="margin:0">Administration</h1><span class="badge2">ADMIN</span>
+      <span class="row" style="margin-left:auto"><a href="/" class="chip">Back to panel</a><span class="chip" id="who"></span></span></div>
+    <div id="view"></div>
+  </main>
+</div>
+<div id="toast" class="toast hide"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,method='GET',body){
+  const r=await fetch('/api'+path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||'Something went wrong.');
+  return d;
+}
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.remove('hide');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.add('hide'),3500)}
+const gb=n=>(n/1e9).toFixed(1)+' GB',mb=n=>Math.round(n/1048576)+'MB';
+const dur=s=>{s=Math.floor(s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+'d ':'')+(h||d?h+'h ':'')+m+'m'};
+const col=p=>p>85?'var(--red)':p>65?'var(--amber)':'var(--green)';
+const bar=(l,p,t)=>`<div class="bl"><span>${l}</span><span>${t}</span></div><div class="bar"><div style="width:${Math.min(100,p)}%;background:${col(p)}"></div></div>`;
+const when=t=>t?esc(String(t).slice(0,16).replace('T',' ')):'-';
+const pc=(u,t)=>t?Math.round(u/t*1000)/10:0;
+const card=(i,bg,l,n,s)=>`<div class="card ic"><i style="background:${bg}">${i}</i><div><span>${l}</span><b>${n}</b><span>${s||''}</span></div></div>`;
+const sel=(v,x)=>v===x?'selected':'';
+const vpsTable=v=>v.length?`<div class="tw"><table><tr><th>ID</th><th>Name</th><th>Owner</th><th>OS</th><th>Plan</th><th>Status</th><th>Expires</th><th></th></tr>`+v.map(x=>`<tr>
+  <td>${x.id}</td><td>${esc(x.name)}</td><td>${esc(x.owner||'-')}</td><td>${esc(x.os||'-')}</td><td>${x.cpu} CPU, ${x.ram} GB</td>
+  <td><span class="pill ${x.status}">${x.status}</span></td><td>${when(x.expires_at)}</td><td class="row">
+  <button class="btn ghost" data-v="${x.id}" data-a="${x.status==='suspended'?'unsuspend':'suspend'}">${x.status==='suspended'?'Unsuspend':'Suspend'}</button>
+  <button class="btn ghost" data-v="${x.id}" data-a="extend">Extend</button>
+  <button class="btn danger" data-v="${x.id}" data-a="delete">Delete</button></td></tr>`).join('')+'</table></div>':'<p class="sub">Nothing here.</p>';
+
+const NAV=[['dash','Dashboard','📊'],['users','Users','👥'],['vps','All VPS','🖥️'],['exp','Expiring VPS','⏳'],['nodes','Nodes','🧩'],['os','OS Icons','🐧'],['shop','Shop Manager','🛒'],
+  ['_','SYSTEM'],['settings','Settings','⚙️'],['bot','Discord Bot','🤖'],['sys','System Info','ℹ️'],['logs','Logs','📄'],['backups','Backups','💾'],['maint','Maintenance','🛠️'],['api','API Management','🔑']];
+let me=null,page='dash',timer;
+
+const views={
+  async dash(){
+    const s=await api('/admin/stats'),h=s.health,ram=pc(h.ram.used,h.ram.total),dk=pc(h.disk.used,h.disk.total);
+    return `<div class="grid">${card('👥','color-mix(in srgb,var(--a) 25%,transparent)','Total users',s.users)}${card('🖥️','rgba(52,211,153,.2)','Total VPS',s.vps,s.running+' running')}
+      ${card('⛔','rgba(251,191,36,.2)','Suspended VPS',s.suspended)}${card('🔌','rgba(248,113,113,.2)','Port usage',s.ports+'/'+s.portLimit)}</div>
+      <div class="two"><div class="card"><h3 style="margin-top:0">System health</h3>${bar('CPU usage',h.cpu,h.cpu+'%')}
+      ${bar('RAM usage',ram,`${ram}% (${mb(h.ram.used)} / ${mb(h.ram.total)})`)}${bar('Disk usage',dk,`${dk}% (${gb(h.disk.used)} / ${gb(h.disk.total)})`)}
+      <div class="row"><span class="chip">Uptime ${dur(h.uptime)}</span><span class="chip">Nodes online 1/1</span></div></div>
+      <div class="card"><h3 style="margin-top:0">Quick actions</h3><div class="qg">
+      <button class="btn" data-go="vps">+ New VPS</button><button class="btn ghost" data-go="users">Manage users</button>
+      <button class="btn ghost" data-go="nodes">Manage nodes</button><button class="btn ghost" data-go="settings">Settings</button>
+      <button class="btn amber" data-act="chk">Check resources</button><button class="btn danger" data-act="emg">Emergency stop</button></div></div></div>
+      <div class="card"><div class="row"><h3 style="margin:0">Node status</h3><button class="btn ghost" data-act="rf" style="margin-left:auto">Refresh</button></div>
+      <div class="card" style="margin-top:12px"><b>${esc(s.node.name)}</b> <span class="pill running">Online (Local)</span><p class="dim" style="margin-bottom:0">${esc(s.node.host)}, ${s.node.cpus} cores</p></div></div>`;
+  },
+  async users(){
+    const [r,u]=await Promise.all([api('/admin/requests'),api('/admin/users')]);
+    return `<h2>Users</h2>`+(r.length?`<h3>Admin access requests</h3><div class="list">`+r.map(x=>`<div class="card row"><b>${esc(x.username)}</b>
+      <span class="dim">${esc(x.email||'no email')}</span><span class="row" style="margin-left:auto"><button class="btn" data-req="${x.id}" data-d="approve">Approve</button>
+      <button class="btn danger" data-req="${x.id}" data-d="deny">Deny</button></span></div>`).join('')+'</div>':'')
+      +`<h3>All users</h3><div class="tw"><table><tr><th>User</th><th>Email</th><th>Role</th><th>VPS</th><th></th></tr>`+u.map(x=>`<tr><td>${esc(x.username)}${x.banned?' <span class="pill error">banned</span>':''}</td>
+      <td>${esc(x.email||'-')}</td><td>${x.role}</td><td>${x.vps}</td><td class="row">`+(x.id===me.id?'<span class="dim">you</span>':
+      `<button class="btn ghost" data-u="${x.id}" data-a="${x.role==='admin'?'remove-admin':'make-admin'}">${x.role==='admin'?'Remove admin':'Make admin'}</button>
+      <button class="btn ${x.banned?'ghost':'danger'}" data-u="${x.id}" data-a="${x.banned?'unban':'ban'}">${x.banned?'Unban':'Ban'}</button>`)+'</td></tr>').join('')+'</table></div>';
+  },
+  async vps(){
+    const [v,p,o]=await Promise.all([api('/admin/vps'),api('/plans'),api('/os')]);
+    return `<h2>All VPS</h2><p class="sub">Create a VPS for any user, or manage the ones that exist.</p>
+      <form class="card row" data-post="admin/vps" style="margin-bottom:14px"><input name="username" placeholder="Username" style="width:160px" required>
+      <select name="planId" style="width:auto">${p.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
+      <select name="osId" style="width:auto">${o.map(x=>`<option value="${x.id}">${x.icon} ${esc(x.name)}</option>`).join('')}</select><button class="btn">Create VPS</button></form>`+vpsTable(v);
+  },
+  async exp(){return `<h2>Expiring VPS</h2><p class="sub">VPS that expire within 7 days, or already have. Expired ones are suspended automatically.</p>`+vpsTable(await api('/admin/expiring'))},
+  async nodes(){
+    const s=await api('/admin/stats');
+    return `<h2>Nodes</h2><div class="card"><b>${esc(s.node.name)}</b> <span class="pill running">Online (Local)</span>
+      <p class="dim">${esc(s.node.host)}, ${s.node.cpus} cores. VPS are created on this machine through Docker.</p></div><p class="dim">Adding remote nodes is not built yet.</p>`;
+  },
+  async os(){
+    const o=await api('/os');
+    return `<h2>OS Icons</h2><p class="sub">Operating systems users can pick for a new VPS. The Docker image must run an SSH server on port 22.</p><div class="list">`
+      +o.map(x=>`<div class="card row"><span style="font-size:24px">${esc(x.icon)}</span><b>${esc(x.name)}</b><code>${esc(x.image)}</code>
+      <button class="btn danger" data-del="admin/os/${x.id}" style="margin-left:auto">Remove</button></div>`).join('')
+      +`</div><form class="card row" data-post="admin/os" style="margin-top:14px"><input name="icon" placeholder="Icon (emoji)" style="width:130px">
+      <input name="name" placeholder="Name" style="width:160px" required><input name="image" placeholder="Docker image" style="width:230px" required><button class="btn">Add OS</button></form>`;
+  },
+  async shop(){
+    const p=await api('/plans');
+    return `<h2>Shop Manager</h2><p class="sub">Plans are free. Each user can claim up to the VPS limit set in Settings.</p><div class="grid">`
+      +p.map(x=>`<div class="card"><b>${esc(x.name)}</b><p>${x.cpu} CPU, ${x.ram} GB RAM, ${x.disk} GB disk</p><button class="btn danger" data-del="admin/plans/${x.id}">Remove</button></div>`).join('')
+      +`</div><form class="card row" data-post="admin/plans"><input name="name" placeholder="Plan name" style="width:150px" required>
+      <input name="cpu" type="number" min="1" placeholder="CPU" style="width:90px" required><input name="ram" type="number" min="1" placeholder="RAM GB" style="width:100px" required>
+      <input name="disk" type="number" min="1" placeholder="Disk GB" style="width:100px" required><button class="btn">Add plan</button></form>`;
+  },
+  async settings(){
+    const s=await api('/admin/settings'),f=(k,l,t='text')=>`<label class="fl">${l}<input name="${k}" type="${t}" value="${esc(s[k])}"></label>`;
+    return `<h2>Settings</h2><form class="card list" data-post="admin/settings" style="max-width:520px;margin-top:14px">${f('site_name','Site name')}${f('max_vps','Max VPS per user','number')}
+      ${f('expiry_days','Days until a VPS expires','number')}${f('port_limit','Port limit','number')}
+      <label class="fl">New registrations<select name="registration"><option value="on" ${sel(s.registration,'on')}>Open</option><option value="off" ${sel(s.registration,'off')}>Closed</option></select></label>
+      <button class="btn">Save settings</button></form>`;
+  },
+  async bot(){
+    const k=await api('/admin/api-key');
+    return `<h2>Discord Bot and API</h2><div class="card list" style="margin-top:14px"><p>The Discord bot talks to the panel with this API key. Put it in the bot's <code>BOT_API_KEY</code> setting.</p>
+      <div class="row"><code id="kv">************************</code><button class="btn ghost" data-act="showk" data-key="${esc(k.key)}">Show key</button><button class="btn danger" data-act="regen">Regenerate key</button></div>
+      <p class="dim">Regenerating stops the old key from working. Update the bot afterwards.</p>
+      <p>Bot setup: set <code>PANEL_URL</code>, <code>BOT_API_KEY</code>, <code>DISCORD_TOKEN</code>, <code>CLIENT_ID</code> and <code>ADMIN_IDS</code>, then run <code>node bot.js</code>. In Discord use <code>/deploy user plan</code>.</p></div>`;
+  },
+  async sys(){
+    const s=await api('/admin/system'),r=(a,b)=>`<div class="card row"><span class="dim" style="min-width:130px">${a}</span><b>${esc(b)}</b></div>`;
+    return `<h2>System Info</h2><div class="list" style="margin-top:14px">${r('Host',s.host)}${r('Platform',s.platform+' ('+s.arch+')')}${r('CPU',s.cpus+' cores, '+(s.cpuModel||''))}
+      ${r('Node.js',s.node)}${r('Docker',s.docker)}${r('Server uptime',dur(s.uptime))}${r('Panel uptime',dur(s.panelUptime))}${r('Database size',Math.round(s.dbSize/1024)+' KB')}</div>`;
+  },
+  async logs(){
+    const l=await api('/admin/logs');
+    return `<h2>Logs</h2><p class="sub">The last 100 actions.</p><div class="tw"><table><tr><th>Time</th><th>User</th><th>Action</th></tr>`
+      +l.map(x=>`<tr><td>${when(x.at)}</td><td>${esc(x.username||'system')}</td><td>${esc(x.text)}</td></tr>`).join('')+'</table></div>';
+  },
+  async backups(){
+    const b=await api('/admin/backups');
+    return `<h2>Backups</h2><p class="sub">A backup is a copy of the panel database: users, VPS records and settings.</p><button class="btn" data-act="mkbk">Create backup</button>
+      <div class="tw" style="margin-top:14px"><table><tr><th>File</th><th>Size</th><th>Created</th><th></th></tr>`
+      +b.map(x=>`<tr><td>${esc(x.name)}</td><td>${Math.round(x.size/1024)} KB</td><td>${when(x.at)}</td><td class="row">
+      <a class="btn ghost" href="/api/admin/backups/${encodeURIComponent(x.name)}" download>Download</a>
+      <button class="btn danger" data-del="admin/backups/${encodeURIComponent(x.name)}">Delete</button></td></tr>`).join('')+'</table></div>';
+  },
+  async maint(){
+    const s=await api('/admin/settings');
+    return `<h2>Maintenance</h2><form class="card list" data-post="admin/settings" style="max-width:520px;margin-top:14px"><p class="dim">While maintenance is on, only admins can use the panel.</p>
+      <label class="fl">Maintenance mode<select name="maintenance"><option value="off" ${sel(s.maintenance,'off')}>Off</option><option value="on" ${sel(s.maintenance,'on')}>On</option></select></label>
+      <label class="fl">Message shown to users<input name="maintenance_msg" value="${esc(s.maintenance_msg)}"></label><button class="btn">Save</button></form>`;
+  }
+};
+views.api=views.bot;
+
+function nav(){
+  $('#nav').innerHTML='<div class="logo">LightCloud</div>'+NAV.map(([k,l,i])=>k==='_'?`<div class="sec">${l}</div>`:`<a class="${k===page?'on':''}" data-p="${k}">${i} ${l}</a>`).join('');
+  document.querySelectorAll('[data-p]').forEach(a=>a.onclick=()=>go(a.dataset.p));
+}
+async function go(p){
+  page=p;clearInterval(timer);nav();
+  try{$('#view').innerHTML=await views[p]()}catch(e){$('#view').innerHTML=`<p class="error">${esc(e.message)}</p>`}
+  if(p==='dash')timer=setInterval(async()=>{if(page==='dash'&&!document.hidden)try{$('#view').innerHTML=await views.dash()}catch(e){}},5000);
+}
+$('#view').onclick=async e=>{
+  const b=e.target.closest('button');if(!b)return;const d=b.dataset;
+  try{
+    if(d.go)return go(d.go);
+    if(d.req)await api(`/admin/requests/${d.req}/${d.d}`,'POST');
+    else if(d.u)await api(`/admin/users/${d.u}/${d.a}`,'POST');
+    else if(d.v&&d.a==='delete'){if(!confirm('Delete this VPS and its data?'))return;await api('/admin/vps/'+d.v,'DELETE')}
+    else if(d.v)await api(`/admin/vps/${d.v}/${d.a}`,'POST');
+    else if(d.del){if(!confirm('Remove this? It cannot be undone.'))return;await api('/'+d.del,'DELETE')}
+    else if(d.act==='mkbk')await api('/admin/backups','POST');
+    else if(d.act==='emg'){if(!confirm('Stop ALL running VPS?'))return;const r=await api('/admin/emergency','POST');toast(r.stopped+' VPS stopped.');return go(page)}
+    else if(d.act==='chk'||d.act==='rf')return go(page);
+    else if(d.act==='regen'){if(!confirm('The old key will stop working. Continue?'))return;await api('/admin/api-key','POST')}
+    else if(d.act==='showk'){$('#kv').textContent=d.key;return}
+    else return;
+    toast('Done.');go(page);
+  }catch(x){toast(x.message)}
+};
+$('#view').onsubmit=async e=>{
+  e.preventDefault();const f=e.target;if(!f.dataset.post)return;
+  try{await api('/'+f.dataset.post,'POST',Object.fromEntries(new FormData(f)));toast('Saved.');go(page)}catch(x){toast(x.message)}
+};
+(async()=>{
+  try{me=await api('/me')}catch{location.href='/login.html';return}
+  if(me.role!=='admin'){location.href='/';return}
+  LCTheme.sync(me.theme);LCTheme.mount();$('#who').textContent=me.username;$('#app').classList.remove('hide');go('dash');
+})();
+</script></body></html>

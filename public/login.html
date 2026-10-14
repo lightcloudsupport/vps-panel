@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in - LightCloud</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="theme.js"></script>
+</head><body>
+<div id="bg" aria-hidden="true"></div><script src="bg.js"></script>
+<div id="login"><form class="card win" id="lf">
+  <div class="bar2"><i></i><i></i><i></i><span style="margin-left:8px">lightcloud / login</span></div>
+  <div class="in">
+    <div class="brand">LightCloud</div><div class="tag">Sign in to your dashboard</div>
+    <input id="l" placeholder="Email or username" autocomplete="username" required>
+    <input id="p" type="password" placeholder="Password" autocomplete="current-password" required>
+    <label class="chk"><input type="checkbox" id="rm"> Remember me</label>
+    <button class="btn">Sign in</button>
+    <a class="btn discord" href="/auth/discord">Continue with Discord</a>
+    <small>No account? <a href="register.html">Create one</a></small>
+    <small id="err" class="error" role="alert"></small>
+  </div>
+</form></div>
+<script>
+const $=s=>document.querySelector(s);
+if(new URLSearchParams(location.search).get('error')==='discord')$('#err').textContent='Discord sign-in failed. Try again.';
+$('#lf').onsubmit=async e=>{
+  e.preventDefault();
+  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({login:$("#l").value,password:$("#p").value,remember:$("#rm").checked})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok)location.href='/';else $('#err').textContent=d.error||'Something went wrong.';
+};
+</script></body></html>

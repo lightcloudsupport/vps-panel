@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LightCloud</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="theme.js"></script></head><body>
+<div id="bg" aria-hidden="true"></div><script src="bg.js"></script>
+<div id="app" class="hide">
+  <aside id="nav"></aside>
+  <main id="view"></main>
+</div>
+<div id="toast" class="toast hide"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let me=null,page='dashboard';
+async function api(path,method='GET',body){
+  const r=await fetch('/api'+path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||'Something went wrong.');
+  return d;
+}
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.remove('hide');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.add('hide'),3500)}
+async function act(fn,msg){try{await fn();if(msg)toast(msg);go(page)}catch(e){toast(e.message)}}
+
+
+async function boot(){
+  try{me=await api('/me')}catch{location.href='/login.html';return}
+  LCTheme.sync(me.theme);LCTheme.mount();
+  $('#app').classList.remove('hide');go('dashboard');
+}
+const pages={dashboard:'Dashboard',vps:'My VPS',forwards:'Port Forwarding',shop:'Shop',profile:'Profile',notes:'Notifications'};
+function nav(){
+  $('#nav').innerHTML=`<div class="logo">${esc(me.site_name||'LightCloud')}</div>`+Object.entries({...pages,admin:me.role==='admin'?'Admin':'Admin access'}).map(([k,v])=>
+    `<a class="${k===page?'on':''}" data-p="${k}">${v}${k==='notes'&&me.unread?`<span class="badge">${me.unread}</span>`:''}</a>`).join('')
+    +'<a id="out" style="margin-top:auto">Sign out</a>';
+  document.querySelectorAll('[data-p]').forEach(a=>a.onclick=()=>go(a.dataset.p));
+  $('#out').onclick=async()=>{await api('/logout','POST');location.reload()};
+}
+async function go(p){
+  page=p;me=await api('/me');nav();
+  const v=$('#view');
+  try{v.innerHTML=await views[p]()}catch(e){v.innerHTML=`<p class="error">${esc(e.message)}</p>`}
+  bind();
+}
+const stat=(l,n,s)=>`<div class="card stat"><span>${l}</span><b>${n}</b><span>${s}</span></div>`;
+const views={
+  async dashboard(){
+    const d=await api('/dashboard');
+    return `<div class="card hero"><h1>Welcome back, ${esc(me.username)}</h1>
+      <p class="sub">${d.total?'Your servers are listed under My VPS.':'You have no VPS yet. Claim one from the Shop.'}</p>
+      <button class="btn" data-go="${d.total?'vps':'shop'}">${d.total?'Manage VPS':'Get a VPS'}</button></div>
+      <div class="grid">${stat('Total VPS',d.total,`${d.running} running, ${d.suspended} suspended`)}
+      ${stat('Total CPU',d.cpu,'cores across all VPS')}${stat('Total memory',d.ram+' GB','allocated')}${stat('Total storage',d.disk+' GB','provisioned')}</div>`;
+  },
+  async vps(){
+    const l=await api('/vps');
+    if(!l.length)return `<h1>My VPS</h1><p class="sub">Nothing here yet.</p><button class="btn" data-go="shop">Get a VPS</button>`;
+    return `<h1>My VPS</h1><p class="sub">Start, stop and connect to your servers.</p><div class="list">`+l.map(v=>`
+      <div class="card"><div class="row"><b>${esc(v.name)}</b><span class="pill ${v.status}">${v.status}</span>
+      <span style="color:var(--dim)">${v.cpu} CPU, ${v.ram} GB RAM, ${v.disk} GB disk, expires ${esc((v.expires_at||'never').slice(0,10))}</span></div>
+      <p>SSH: <code>ssh root@${esc(v.host)} -p ${v.ssh_port}</code><br>Password: <code>${esc(v.root_pw)}</code></p>
+      <div class="row"><button class="btn" data-vps="${v.id}" data-a="start">Start</button>
+      <button class="btn ghost" data-vps="${v.id}" data-a="restart">Restart</button>
+      <button class="btn ghost" data-vps="${v.id}" data-a="stop">Stop</button>
+      <button class="btn danger" data-del="${v.id}">Delete</button></div></div>`).join('')+'</div>';
+  },
+  async forwards(){
+    const [f,l]=await Promise.all([api('/forwards'),api('/vps')]);
+    return `<h1>Port Forwarding</h1><p class="sub">Open a public port that points at a port on your VPS. TCP only; the server firewall must allow the port.</p>
+      <form class="card row" id="ff"><select id="fv">${l.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select>
+      <input id="fh" type="number" placeholder="Public port (1024-65535)" required style="width:210px">
+      <input id="fc" type="number" placeholder="VPS port" required style="width:130px"><button class="btn">Add forward</button></form>
+      <div class="list" style="margin-top:14px">${f.map(x=>`<div class="card row"><b>${esc(x.vps_name)}</b>
+      <code>${esc(x.host)}:${x.host_port}</code> to VPS port <code>${x.container_port}</code><button class="btn danger" data-fdel="${x.id}" style="margin-left:auto">Remove</button></div>`).join('')||'<p class="sub">No forwards yet.</p>'}</div>`;
+  },
+  async shop(){
+    const [p,o]=await Promise.all([api('/plans'),api('/os')]);
+    return `<h1>Shop</h1><p class="sub">Pick a plan and an OS, then create your VPS. It is free.</p><select id="os" style="max-width:240px;margin-bottom:14px">${o.map(x=>`<option value="${x.id}">${x.icon} ${esc(x.name)}</option>`).join('')}</select><div class="grid">`+p.map(x=>
+      `<div class="card"><b>${esc(x.name)}</b><p>${x.cpu} CPU<br>${x.ram} GB RAM<br>${x.disk} GB disk</p><button class="btn" data-claim="${x.id}">Create VPS</button></div>`).join('')+'</div>'
+      +(me.role==='admin'?`<form class="card row" id="pf"><b>Add plan</b><input id="pn" placeholder="Name" style="width:140px" required>
+      <input id="pc" type="number" placeholder="CPU" style="width:90px" required><input id="pr" type="number" placeholder="RAM GB" style="width:100px" required>
+      <input id="pd" type="number" placeholder="Disk GB" style="width:100px" required><button class="btn">Add plan</button></form>`:'');
+  },
+  async admin(){
+    if(me.role==='admin'){location.href='/admin.html';return ''}
+    if(me.role!=='admin'){
+      const wait=me.adminRequest==='pending';
+      return `<h1>Admin access</h1><p class="sub">Enter the admin key and your own username. If an admin already exists, they must approve you.</p>`+(wait
+        ?'<div class="card">Your request is waiting for an admin to approve it. You will get a notification.</div>'
+        :`<form class="card list" id="af" style="max-width:420px"><input id="ak" type="password" placeholder="Admin key" autocomplete="off" required>
+          <input id="au" placeholder="Your username" autocomplete="off" required><button class="btn">Request access</button></form>`);
+    }
+    const [r,u]=await Promise.all([api('/admin/requests'),api('/admin/users')]);
+    return `<h1>Admin</h1><p class="sub">Approve people who asked for admin access and review users.</p>
+      <h3>Access requests</h3><div class="list">`+(r.map(x=>`<div class="card row"><b>${esc(x.username)}</b>
+      <span style="color:var(--dim)">${esc(x.email||'no email')}${x.discord_id?', Discord linked':''}</span>
+      <span class="row" style="margin-left:auto"><button class="btn" data-rq="${x.id}" data-d="approve">Approve</button>
+      <button class="btn danger" data-rq="${x.id}" data-d="deny">Deny</button></span></div>`).join('')||'<p class="sub">No pending requests.</p>')+`</div>
+      <h3>Users</h3><div class="list">`+u.map(x=>`<div class="card row"><b>${esc(x.username)}</b>
+      <span class="pill ${x.role==='admin'?'running':'stopped'}">${x.role}</span>
+      <span style="color:var(--dim)">${esc(x.email||'')} ${x.vps} VPS</span></div>`).join('')+'</div>';
+  },
+  async profile(){
+    return `<h1>Profile</h1><p class="sub">Your account on ${esc(me.site_name||'LightCloud')}.</p>
+      <div class="grid">${stat('Username',esc(me.username),me.role==='admin'?'Admin':'User')}
+      ${stat('Email',`<span style="font-size:16px">${esc(me.email||'Not set')}</span>`,'You can sign in with it')}
+      ${stat('Discord',me.discord_id?'Linked':'Not linked','Sign in with Discord')}</div>
+      <form class="card list" id="em" style="max-width:520px;margin-bottom:14px"><b>Email</b>
+      <input id="emv" type="email" placeholder="you@example.com" autocomplete="email" required><button class="btn">Save email</button></form>
+      <form class="card list" id="pw" style="max-width:520px"><b>Change password</b>
+      <input id="pwc" type="password" placeholder="Current password" autocomplete="current-password">
+      <input id="pwn" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" required><button class="btn">Update password</button></form>`;
+  },
+  async notes(){
+    const n=await api('/notes');
+    return `<h1>Notifications</h1><p class="sub">&nbsp;</p><div class="list">`+(n.map(x=>`<div class="card">${esc(x.text)}<br><small style="color:var(--dim)">${esc(x.at)}</small></div>`).join('')||'<p class="sub">You are all caught up.</p>')+'</div>';
+  }
+};
+function bind(){
+  document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+  document.querySelectorAll('[data-vps]').forEach(b=>b.onclick=()=>act(()=>api(`/vps/${b.dataset.vps}/${b.dataset.a}`,'POST'),'Done.'));
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>confirm('Delete this VPS and all its data?')&&act(()=>api('/vps/'+b.dataset.del,'DELETE'),'VPS deleted.'));
+  document.querySelectorAll('[data-fdel]').forEach(b=>b.onclick=()=>act(()=>api('/forwards/'+b.dataset.fdel,'DELETE'),'Forward removed.'));
+  document.querySelectorAll('[data-claim]').forEach(b=>b.onclick=()=>{b.disabled=true;toast('Creating VPS...');act(()=>api(`/shop/${b.dataset.claim}/claim`,'POST',{osId:$('#os').value}),'VPS created.');b.disabled=false});
+  const ff=$('#ff');if(ff)ff.onsubmit=e=>{e.preventDefault();act(()=>api('/forwards','POST',{vps_id:$('#fv').value,host_port:$('#fh').value,container_port:$('#fc').value}),'Forward added.')};
+  const em=$('#em');if(em)em.onsubmit=e=>{e.preventDefault();act(()=>api('/profile/email','POST',{email:$('#emv').value}),'Email saved.')};
+  const pw=$('#pw');if(pw)pw.onsubmit=e=>{e.preventDefault();act(()=>api('/profile/password','POST',{current:$('#pwc').value,password:$('#pwn').value}),'Password updated.')};
+  const af=$('#af');if(af)af.onsubmit=async e=>{e.preventDefault();try{const r=await api('/admin/unlock','POST',{key:$('#ak').value,username:$('#au').value});toast(r.status==='admin'?'You are now an admin.':'Request sent. An admin must approve it.');go('admin')}catch(x){toast(x.message)}};
+  document.querySelectorAll('[data-rq]').forEach(b=>b.onclick=()=>act(()=>api(`/admin/requests/${b.dataset.rq}/${b.dataset.d}`,'POST'),'Done.'));
+  const pf=$('#pf');if(pf)pf.onsubmit=e=>{e.preventDefault();act(()=>api('/admin/plans','POST',{name:$('#pn').value,cpu:$('#pc').value,ram:$('#pr').value,disk:$('#pd').value}),'Plan added.')};
+}
+boot();
+</script></body></html>
